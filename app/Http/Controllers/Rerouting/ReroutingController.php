@@ -1,0 +1,390 @@
+<?php
+
+namespace App\Http\Controllers\Rerouting;
+
+use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
+use App\Models\vehicle_units\vehicle_units;
+use App\Models\unit_model\Unit_model;
+use Illuminate\Support\Facades\Response;
+use App\Models\unitroute\Unitroutes;
+use App\Models\unitmovement\Unitmovement;
+use App\Models\ReroutingDetails\ReroutingDetails;
+use App\Models\Rerouting\Rerouting;
+
+use App\Models\unitmapping\Unitmapping;
+
+
+use App\Models\shop\Shop;
+use Illuminate\Support\Facades\DB;
+use Batch;
+
+use App\Models\queryanswer\Queryanswer;
+use App\Models\querydefect\Querydefect;
+use App\Models\drr\Drr;
+
+class ReroutingController extends Controller
+{
+    /**
+     * Display a listing of the resource.
+     *
+     * @return \Illuminate\Http\Response
+     */
+    public function index()
+    {
+        //
+    }
+
+    /**
+     * Show the form for creating a new resource.
+     *
+     * @return \Illuminate\Http\Response
+     */
+    public function create()
+    {
+        $lot = vehicle_units::where('status','!=','2')->distinct('lot_no')->pluck('lot_no', 'lot_no');
+        $job = vehicle_units::where('status','!=','2')->distinct('job_no')->pluck('job_no', 'job_no');
+        $model = Unit_model::pluck('model_name', 'id');
+        $data=[];
+        return view('rerouting.create')->with(compact('lot','job','model','data'));
+    }
+
+    /**
+     * Store a newly created resource in storage.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\Response
+     */
+    public function store(Request $request)
+    {
+        //
+    }
+
+    /**
+     * Display the specified resource.
+     *
+     * @param  int  $id
+     * @return \Illuminate\Http\Response
+     */
+    public function show($id)
+    {
+        //
+    }
+
+    /**
+     * Show the form for editing the specified resource.
+     *
+     * @param  int  $id
+     * @return \Illuminate\Http\Response
+     */
+    public function edit($id)
+    {
+        //
+    }
+
+    /**
+     * Update the specified resource in storage.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @param  int  $id
+     * @return \Illuminate\Http\Response
+     */
+    public function update(Request $request, $id)
+    {
+        //
+    }
+
+    /**
+     * Remove the specified resource from storage.
+     *
+     * @param  int  $id
+     * @return \Illuminate\Http\Response
+     */
+    public function destroy($id)
+    {
+        //
+    }
+
+
+    public function filtererouting(Request $request)
+    {
+
+        if(!empty($request->lot_no) || !empty($request->job_no) ||  !empty($request->model_id) ){
+
+            $vehicle = vehicle_units::where('status','!=','2')->where('model_id', '!=', '0');
+          
+
+
+           if(!empty($request->lot_no)){
+
+            $vehicle->whereIn('lot_no', $request->lot_no);
+            }
+
+            
+           if(!empty($request->job_no)){
+
+            $vehicle->whereIn('job_no', $request->job_no);
+            }
+             if(!empty($request->model_id)){
+
+                $vehicle->whereIn('model_id', $request->model_id);
+            }
+         
+       
+        $data=$vehicle->get();
+       
+    
+           
+        $lot = vehicle_units::where('status','!=','2')->distinct('lot_no')->pluck('lot_no', 'lot_no');
+        $job = vehicle_units::where('status','!=','2')->distinct('job_no')->pluck('job_no', 'job_no');
+        $model = Unit_model::pluck('model_name', 'id');
+
+
+       // return redirect()->route('qrcodefilterresult', ['lot'=>$lot,'job'=>$job,'model'=>$model,'data'=>$data]);
+
+        //return redirect()->route('qrcode.index')->with(compact('lot','job','model','data'));
+
+
+        return view('rerouting.create')->with(compact('lot','job','model','data'));
+
+        }else{
+             return redirect()->route('qrcode.index')->with('message', 'choose one record!!!');
+
+
+        }
+
+    }
+
+
+    public function completererouting($id)
+    {
+
+
+        
+
+
+        $vehicle = vehicle_units::find($id);
+        $data = Unitmovement::where('vehicle_id',$id)->get();
+        $shops= Shop::where('check_point',1)->orderBy('shop_no', 'asc')->get();
+
+        
+       
+    
+           
+        $route = Unitroutes::distinct('route_number')->pluck('name', 'route_number');
+ 
+
+        return view('rerouting.complete')->with(compact('route','vehicle','data','shops','id'));
+
+     
+    }
+
+    public function saverouting(Request $request)
+    {
+
+        $data = $request->only(['vehicle_id', 'from_route_id', 'to_route_id', 'description']);
+        $data['user_id']=auth()->user()->id;
+        $item_data['rerouting_item']  = $request->only(['unit_movement_id','from_shop_id', 'to_shop_id', 'is_deleted']);
+
+        $datas = array();
+        $i = 0;
+
+        
+
+      
+
+        if (request()->ajax()) {
+            try {
+
+        
+
+        DB::beginTransaction();
+        $result = ReroutingDetails::create($data);
+
+        if($result->id){
+            $deleted_array=array();
+            $unit_movement_update = array();
+            $shop_array=array();
+          
+            
+            foreach ($item_data['rerouting_item']['unit_movement_id'] as $key => $value) {
+                $deleted=0;
+                $is_shop=0;
+                $save=1;
+           
+            if(isset($item_data['rerouting_item']['is_deleted'][$key])     ){
+                $deleted_array[]=$item_data['rerouting_item']['unit_movement_id'][$key];
+                $deleted=1;
+            }
+
+
+            if(empty($item_data['rerouting_item']['to_shop_id'][$key])){
+                $is_shop=1;
+
+
+            }else{
+                $shop_array[]=array(
+                    "shop_id" =>   $item_data['rerouting_item']['from_shop_id'][$key],
+                    "to_shop_id" =>   $item_data['rerouting_item']['to_shop_id'][$key]
+                  );
+                  
+               
+
+                $maping = Unitmapping::where('shop_id',$item_data['rerouting_item']['to_shop_id'][$key])->where('route_number',$request->to_route_id)->first();
+
+          
+                $unit_movement_update[] = array('id' => $item_data['rerouting_item']['unit_movement_id'][$key], 'shop_id' => $item_data['rerouting_item']['to_shop_id'][$key],'route_number'=> $request->to_route_id,'route_id'=> $maping->route_id);
+                
+            }
+
+
+            if($deleted==0 && $is_shop==1 ){
+                $save=0;
+
+            }
+
+         
+
+           
+
+            
+
+
+            $datas[] = array(
+                'rerouting_details_id' => $result->id,
+                'unit_movement_id' => $item_data['rerouting_item']['unit_movement_id'][$key],
+                'from_shop_id' => $item_data['rerouting_item']['from_shop_id'][$key],
+                'is_deleted' =>  $deleted,
+                'to_shop_id' => $item_data['rerouting_item']['to_shop_id'][$key]);
+
+              
+
+         
+
+
+        }
+
+    }
+
+      
+
+        // Check validation failure
+    if ($save==0) {
+
+       
+
+        $output = ['success' => false,
+                             'msg' => "Select  Shop Or Checked  must be selected",
+                             ];
+
+                             DB::rollBack(); // roll back transaction if not completely saved
+
+                      
+                             
+     }else{
+//save data to retouting table
+
+
+$savererouting = Rerouting::insert($datas);
+
+// update vehicle
+
+
+
+$v_update = vehicle_units::find($request->vehicle_id); 
+$v_update->update(['route' => $request->to_route_id]);
+$v_update->touch();
+
+// update unit movement
+
+
+        if($is_shop==0){
+
+
+            foreach ($shop_array as $shopdata) {
+
+                //update query answer
+                $result = Queryanswer::where('vehicle_id',$request->vehicle_id)->where('shop_id',$shopdata['shop_id'])->update(['shop_id' => $shopdata['to_shop_id']]);
+       
+                $result = Querydefect::where('vehicle_id',$request->vehicle_id)->where('shop_id',$shopdata['shop_id'])->update(['shop_id' => $shopdata['to_shop_id']]);
+                $result = Drr::where('vehicle_id',$request->vehicle_id)->where('shop_id',$shopdata['shop_id'])->update(['shop_id' => $shopdata['to_shop_id']]);
+            }
+
+            //update
+
+            $update_unitmovement = new Unitmovement;
+            $index = 'id';
+            Batch::update($update_unitmovement, $unit_movement_update, $index);
+
+
+
+       
+
+
+        }
+
+// delete from unit movement
+        if($deleted==1){
+
+            foreach($deleted_array as $val){
+
+                $deleteunits=Unitmovement::where('id',  $val)->delete();
+
+
+
+            }
+
+
+        }
+
+
+   DB::commit();
+
+
+        $output = ['success' => true,
+        'msg' => "Re-Routing Done  Successfully"
+    ];
+
+
+
+
+
+     }
+
+
+
+
+    } catch (\Exception $e) {
+
+        DB::rollBack(); // roll back transaction if not completely saved
+        \Log::emergency("File:" . $e->getFile(). "Line:" . $e->getLine(). "Message:" . $e->getMessage());
+            
+        $output = ['success' => false,
+                    'msg' => $e->getMessage(),
+                    ];
+    }
+   
+}
+
+
+
+     return $output;
+
+     
+
+
+
+     
+        
+      
+    
+
+     
+
+
+
+    }
+    
+
+
+}

@@ -1,0 +1,101 @@
+<?php
+
+namespace App\Console\Commands;
+
+use App\Models\vehicle_units\vehicle_units;
+use App\Models\unitmovement\Unitmovement;
+use App\Models\bufferstatus\BufferStatus;
+use App\Models\shop\Shop;
+
+use Carbon\Carbon;
+
+use Illuminate\Console\Command;
+
+
+class CheckBuffer extends Command
+{
+    /**
+     * The name and signature of the console command.
+     *
+     * @var string
+     */
+    protected $signature = 'command:checkbuffer';
+
+    /**
+     * The console command description.
+     *
+     * @var string
+     */
+    protected $description = 'Command description';
+
+    /**
+     * Create a new command instance.
+     *
+     * @return void
+     */
+    public function __construct()
+    {
+        parent::__construct();
+    }
+
+    /**
+     * Execute the console command.
+     *
+     * @return int
+     */
+    public function handle()
+    {
+        $sectionnseries = Shop::where('id','=',8)->value('no_of_sections');
+        $sectionfseries = Shop::where('id','=',10)->value('no_of_sections');
+
+        $sectioncvtrim = Shop::where('id','=',5)->value('no_of_sections');
+        $sectionlcvtrim = Shop::where('id','=',11)->value('no_of_sections');
+        $sectionlcvinchess = Shop::where('id','=',12)->value('no_of_sections');
+
+        $sectionriv = Shop::where('id','=',6)->value('no_of_sections');
+
+        $date = '2021-12-07';//Carbon::today()->format('Y-m-d');
+
+
+        //TRIMLINE BUFFER
+        $alln_f = Unitmovement::where([['datetime_out','=',$date],['shop_id','=',5]])->count(); //trim out
+        $trimbuff = $alln_f - ($sectionnseries + $sectionfseries);
+        $trim = ($trimbuff > 0) ? $trimbuff : 0;
+
+        //PAINTSHOP BUFFER
+        $allcabins = Unitmovement::where([['datetime_out','=',$date],['shop_id','=',3]])->count();//paintshop out
+        $cb_pkups = Unitmovement::where([['datetime_out','=',$date],['shop_id','=',3],['route_number','=',4]])->count();
+        $cb_route5 = Unitmovement::where([['datetime_out','=',$date],['shop_id','=',3],['route_number','=',5]])->count();
+        $cvcabins = $allcabins - ($cb_pkups + $cb_route5);
+        $lcvcabins = $cb_route5;
+
+        $lcvpaintbuff = $lcvcabins - $sectionlcvtrim;
+        $lcvpaintbf = ($lcvpaintbuff > 0) ? $lcvpaintbuff : 0;
+        $cvpaintbuff = $cvcabins - $sectioncvtrim;
+        $cvpaintbf = ($cvpaintbuff > 0) ? $cvpaintbuff : 0;
+
+        $paint = $lcvpaintbf + $cvpaintbf;
+
+        //RIVETING BUFFER
+        $alltrims= Unitmovement::where([['datetime_out','=',$date],['shop_id','=',6]])->count();//reveting out
+        $pkups = Unitmovement::where([['datetime_out','=',$date],['shop_id','=',6],['route_number','=',4]])->count();
+        $route5 = Unitmovement::where([['datetime_out','=',$date],['shop_id','=',6],['route_number','=',5]])->count();
+        $cvtrims = $alltrims - ($pkups + $route5);
+        $lcvtrims = $route5;
+
+        $lcvtrimbuff = $lcvtrims - $sectionlcvinchess;
+        $lcvtrim = ($lcvtrimbuff > 0) ? $lcvtrimbuff : 0;
+        $cvtrimbuff = $cvtrims - ($sectionnseries + $sectionfseries);
+        $cvtrim = ($cvtrimbuff > 0) ? $cvtrimbuff : 0;
+        $rivet = $cvtrim + $lcvtrim;
+
+        $buff = new BufferStatus;
+        $buff->date = $date;
+        $buff->timline = $trim;
+        $buff->paintshop = $paint;
+        $buff->riveting = $rivet;
+        $buff->save();
+
+    }
+}
+

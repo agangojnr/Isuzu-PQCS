@@ -1,0 +1,564 @@
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use App\Http\Controllers\Controller;
+use App\Models\vehicle_units\vehicle_units;
+use App\Models\unitmapping\Unitmapping;
+use App\Models\unitmovement\Unitmovement;
+use App\Models\unitroute\Unitroutes;
+use App\Models\queryanswer\Queryanswer;
+use App\Models\querycategory\Querycategory;
+use App\Models\shop\Shop;
+use App\Models\drr\Drr;
+use App\Models\std_working_hr\Std_working_hr;
+use App\Models\querydefect\Querydefect;
+
+
+
+use Carbon\Carbon;
+
+use DB;
+
+class UnitMovementController extends Controller
+{
+    //
+
+       public function sheduledunits()
+    {
+
+    	$data = vehicle_units::where('status',0)->with('model')->get();
+    	return response()->json(['msg' => null, 'data' => $data, 'success' => true], 200);
+
+    }
+
+    public function moveunitfromstore(Request $request)
+    {
+
+       $record=array();
+
+
+
+       
+
+         
+     if(empty($request->component)  ){
+
+          return response()->json(['msg' => 'No Component Selected!!!', 'data' => null , 'success' => false], 200);
+      exit;
+
+     }
+
+
+
+
+  $exist=$this->checkunitmoved($request->id,$request->component['id']);
+     if($exist){
+
+          return response()->json(['msg' => 'Component  Already Moved!!!', 'data' => null , 'success' => false], 200);
+  exit;
+
+     }
+
+
+    	$data = Unitmapping::where('route_id',$request->component['id'])->where('first_shop',1)->first();
+    	$date=now();
+    	  $record['current_position']='InShop';
+        $record['datetime_in']=$date;
+        $record['vehicle_id']=$request->id;
+        $record['route_id']=$request->component['id'];
+        $record['route_number']=$request->component['route_number'];
+        $record['shop_id']=$data->shop_id;
+        $record['current_shop']=$data->shop_id;  
+        $record['done_by']='stores';
+        $record['appuser_id']=Auth::id();
+
+
+
+        DB::beginTransaction();
+         try {
+
+            $datas = Unitmovement::create($record);
+             $vehicle = vehicle_units::find($request->id);
+              $comp_name = Unitroutes::find($request->component['id']);
+
+
+               $cabin_or_corkpit=0;
+               if($comp_name->routing_part =='Cabin Or Cockpit'){
+              $cabin_or_corkpit=1;
+
+               }
+
+                $chasis_moved=0;
+               if($comp_name->routing_part =='Chassis'){
+               $chasis_moved=1;
+
+               }
+
+
+             if($vehicle->component_moved==1){
+              $vehicle->status = 1;
+            }
+            
+
+            if($request->job_no){
+              $vehicle->job_no = $request->job_no;
+            }
+            $vehicle->component_moved = $vehicle->component_moved+1;
+            $vehicle->cabin_cockpit_moved = $cabin_or_corkpit;
+            $vehicle->chasis_moved = $chasis_moved;
+            $vehicle->save();
+
+          
+
+
+
+       DB::commit();
+       return response()->json(['msg' => 'Unit Moved Successfully', 'data' => $datas['id'] , 'success' => true], 200);
+         	} catch (\Exception $e) {
+                \Log::emergency("File:" . $e->getFile(). "Line:" . $e->getLine(). "Message:" . $e->getMessage());
+
+     return response()->json(['msg' => $e->getMessage(), 'data' => null , 'success' => false], 200);
+                    
+            
+            }
+        
+        
+    	
+
+    	
+
+    }
+
+
+
+    public function moveunit(Request $request)
+    {
+
+$record=array();
+$drrrecord=array();
+
+$model_id=$request->model_id;
+$shop_id=$request->shop_id;
+$vid=$request->vehicle_id;
+
+
+
+
+$category_array =Querycategory::where('shop_id',$shop_id)->where('quiz_type','!=','others')->whereHas('query_models',function ($q)  use ($model_id)  {
+  $q->where('unit_model_id', $model_id);
+  })->pluck('id');
+
+
+  $rows  = Querycategory::where('shop_id',$shop_id)->where('quiz_type','!=','others')->whereIn('id', $category_array )->get();
+    
+  $total_queries=0;      
+  foreach ($rows as $row ) {
+    $total_queries+=$row->queries_count;
+       
+   }
+
+       
+         $total_answered = Queryanswer::where('vehicle_id',$request->vehicle_id)->where('shop_id',$request->shop_id)->count();
+
+ $std = Std_working_hr::where('model_id',$request->model_id)->where('shop_id',$request->shop_id)->first();
+
+
+
+ $stdhrs=0;
+
+    if(!empty($std)){
+       $stdhrs=$std->std_hors;
+     
+     }
+
+     
+
+       $quiz_check=0;
+         if($total_answered >=$total_queries){
+        $quiz_check=1;
+        }
+
+
+if($quiz_check==0 ){
+return response()->json(['msg' => 'You have not answered all the queries!!!', 'data' => null , 'success' => false], 200);
+  exit;
+}
+
+       //get route
+$checkifmoved=$this->check_unit_moved($request->vehicle_id,$request->shop_id);
+      if(!$checkifmoved ){
+return response()->json(['msg' => 'Unit already moved to the next shop!!!', 'data' => null , 'success' => false], 200);
+  exit;
+}
+
+
+         $movement = Unitmovement::where('vehicle_id',$request->vehicle_id)->where('shop_id',$request->shop_id)->where('current_shop',$request->shop_id)->first();
+
+                //check next shop
+       $nextshop = Unitmapping::where('route_id',$movement->route_id)->where('shop_id',$request->shop_id)->first();
+        $cabincheck=0;
+       //check if cabin has been pushed
+       if($nextshop->joining_shop==1 ){
+         //point to check cabin & get last cabin shop
+         $cabin_last_shop=$nextshop->join_with;
+
+         $cabin_last_shop = Unitmovement::where('vehicle_id',$request->vehicle_id)->where('shop_id',$cabin_last_shop)->first();
+         if(!empty($cabin_last_shop)  ){
+
+          if($cabin_last_shop->current_shop!=0){
+            $cabincheck=1;
+          }
+
+         }else{
+          $cabincheck=1;
+
+         }
+
+
+
+
+       }
+       
+
+      
+
+
+       if( $cabincheck==1){
+
+        return response()->json(['msg' => 'You have not Pushed Unit Without Cabin!!!', 'data' => null , 'success' => false], 200);
+        exit;
+
+       }
+
+        DB::beginTransaction();
+         try {
+
+          //complete Unit
+
+
+          if( ($nextshop->next_shop_id==0 &&  $nextshop->first_shop==0) || ($nextshop->next_shop_id==0 &&  $nextshop->first_shop==1) ){
+            //end of line
+             
+
+            }elseif($nextshop->next_shop_id==0 &&  $nextshop->first_shop==2){
+              //vehicle completed sold to FCW
+               
+                   
+             
+                    if($request->defect_exist){
+              
+                  return response()->json(['msg' => 'You Cannot Complete a Unit with defect!!!', 'data' => null , 'success' => false], 200);
+                exit;
+              
+                }else{
+
+
+                  $vehicle = vehicle_units::find($request->vehicle_id);
+                  $vehicle->date_completed = now();
+                  $vehicle->status = 2;
+                  $vehicle->save();
+
+                  
+              
+                }
+            
+  
+              
+              //end point C
+              }else{
+              
+//unit move to next shop
+
+        $date=now();
+    	  $record['current_position']='InShop';
+        $record['datetime_in']=$date;
+        $record['vehicle_id']=$request->vehicle_id;
+        $record['route_id']=$movement->route_id;
+        $record['route_number']=$movement->route_number;
+        $record['shop_id']=$nextshop->next_shop_id;
+        $record['current_shop']=$nextshop->next_shop_id;
+        $record['done_by']='inspector';
+        $record['appuser_id']=Auth::id();
+
+       $datas = Unitmovement::create($record);
+
+              }
+
+
+      //update unit movement
+              
+      $movement->current_shop = 0;
+      $movement->std_hrs =  $stdhrs;
+      $movement->datetime_out = now();
+      $movement->save();     
+
+
+      
+      $defect_exist_pershop=$this->check_query_defect($request->vehicle_id,$request->shop_id);
+      //update query defect status to complete
+                            if($defect_exist_pershop){
+            $qdatas = Querydefect::where('shop_id',$request->shop_id)->where('vehicle_id',$request->vehicle_id)->get();
+                     foreach($qdatas as $qdata){
+      
+                    $qupdate = Querydefect::find($qdata->id);
+                    $qupdate->is_complete = 'Yes';
+                    $qupdate->update();
+                     }      
+      
+                   }
+
+
+                   
+
+//check if its offline shop
+        $check_offline = Shop::where('offline','1')->where('id', $request->shop_id)->exists();
+
+      
+        if($check_offline){
+          //check if unit has uncorrected defects
+
+         
+      $defect_exist=$this->check_unrepaired_defect($request->vehicle_id,$request->shop_id);
+
+     
+      if($defect_exist){
+
+       //book drr and if not booked
+       $drr_exist=$this->check_drr($request->vehicle_id,$request->shop_id);
+
+      
+
+       if(!$drr_exist){
+                   $drrrecord['vehicle_id']=$request->vehicle_id;
+                   $drrrecord['shop_id']=$request->shop_id;
+                   $drrrecord['done_by']=Auth::id();
+                   $drrsave = Drr::create($drrrecord);
+
+       }
+
+      
+
+       $shop_affected='mpa_drr';
+
+       if($request->shop_id==15){
+        $shop_affected='mpb_drr';
+
+       }else if($request->shop_id==16){
+        $shop_affected='mpc_drr';
+
+       }
+
+      
+
+        //update defects affecting drr for MPB and DTC
+
+        $shopid=$request->shop_id;
+        $vehicle_id=$request->vehicle_id;
+        if($request->shop_id==15){
+       $get_alldefects = Querydefect::where('vehicle_id',$vehicle_id)->where('repaired','No')
+                                    ->orWhere(function ($query) use ($shopid, $vehicle_id) {
+                                      $query->where('shop_id',$shopid)  
+                                      ->where('vehicle_id',$vehicle_id);     
+                                    })->orWhere(function ($query) use ($vehicle_id) {
+                                      $query->where('shop_id',14)
+                                      ->where('vehicle_id',$vehicle_id);         
+                              })->get();
+
+
+        foreach( $get_alldefects as $defects){
+
+ $v_update = Querydefect::find($defects->id); 
+$v_update->update([$shop_affected => '1']);
+//$v_update->touch();
+       }
+
+      }else{
+
+// MPA and MPC
+        $get_alldefects = Querydefect::where('vehicle_id',$vehicle_id)->where('repaired','No')
+        ->orWhere(function ($query) use ($shopid, $vehicle_id) {
+          $query->where('shop_id',$shopid)  
+          ->where('vehicle_id',$vehicle_id);     
+        })->get();
+
+
+foreach( $get_alldefects as $defects){
+
+$v_update = Querydefect::find($defects->id); 
+$v_update->update([$shop_affected => '1']);
+//$v_update->touch();
+}
+
+
+      }
+
+
+
+
+
+      }
+
+
+
+
+
+
+        }
+
+    
+  
+
+       
+  
+       DB::commit();
+       return response()->json(['msg' => 'Unit Moved Successfully', 'data' => null , 'success' => true], 200);
+         	} catch (\Exception $e) {
+            DB::rollBack(); // roll back transaction if not completely saved
+                \Log::emergency("File:" . $e->getFile(). "Line:" . $e->getLine(). "Message:" . $e->getMessage());
+
+     return response()->json(['msg' => $e->getMessage(), 'data' => null , 'success' => false], 200);
+                    
+            
+            }
+        
+        
+    	
+
+    	
+
+    }
+
+    public function check_unit_moved($value,$value1)
+    {
+        return  Unitmovement::where('current_shop', $value1)->where('vehicle_id',$value)->exists();
+    }
+
+    public function check_defect($value)
+    {
+        return  Queryanswer::where('has_error', 'Yes')->where('vehicle_id',$value)->exists();
+    }
+	
+	  public function check_drr($value,$value1)
+    {
+        return  Drr::where('vehicle_id', $value)->where('shop_id',$value1)->exists();
+    }
+	
+	public function check_drl($value)
+    {
+        return  Queryanswer::where('vehicle_id', $value)->where('shop_id',14)->orWhere('shop_id', 15)->orWhere('shop_id', 16)->orWhere('shop_id', 27)->exists();
+    }
+
+  
+  
+     public function check_unrepaired_defect($value,$value2)
+    {
+
+      if($value2==15){
+
+        return  Querydefect::where('vehicle_id',$value)->where('repaired','No')
+        ->orWhere(function ($query) use ($value,$value2) {
+          $query->where('vehicle_id', $value)
+      ->where('shop_id',$value2);      
+})->orWhere(function ($query) use ($value)  {
+  $query->where('vehicle_id', $value)
+->where('shop_id',14);      
+})->exists();
+
+      }else{
+
+        return  Querydefect::where('vehicle_id',$value)->where('repaired','No')
+        ->orWhere(function ($query) use ($value,$value2) {
+          $query->where('vehicle_id', $value)
+      ->where('shop_id',$value2);      
+})->exists();
+
+
+      }
+      
+    }
+
+    public function getcomponent($route_id,$vehicle_id)
+    {
+
+      
+      $master=array();
+
+      $master['vehicles'] = vehicle_units::find($vehicle_id);
+    	$master['routes']  = Unitroutes::where('route_number',''.$route_id.'')->get();
+    	return response()->json(['msg' => null, 'data' => $master, 'success' => true], 200);
+
+    }
+
+     public function checkunitmoved($value,$value1)
+    {
+        return  Unitmovement::where('vehicle_id', $value)->where('route_id',$value1)->exists();
+    }
+
+
+
+    public function checkunitshop($chasis,$shop_id)
+    {
+
+     $master=array();
+    $vehicle = vehicle_units::where('vin_no', ''.$chasis.'')->with('model')->first();
+    
+    
+  $master['unitcheck'] =Unitmovement::where('vehicle_id', ''.$vehicle->id.'' )->where('current_shop',''.$shop_id.'')->exists();
+  $master['vehicledata'] =$vehicle;
+  $currentposion='';
+  $qrcheck=0;
+
+
+
+  if($vehicle->status==0){
+  $currentposion='Store';
+  }else if($vehicle->status==2){
+    $currentposion='FCW';
+
+  }else{
+  $positions=Unitmovement::where('vehicle_id', ''.$vehicle->id.'' )->where('current_shop', '!=', 0)->get();
+
+  if(!empty($positions)){
+
+    $position_array=[];
+  foreach($positions as $position){
+    $position_array[]=$position->shop->shop_name;
+
+  }
+
+$currentposion=implode(', ', $position_array);
+
+}else{
+   $currentposion='End Of Line';
+}
+  }
+
+ $master['currentposion'] =$currentposion;
+
+
+      return response()->json(['msg' => null, 'data' => $master, 'success' => true], 200);
+
+    }
+
+
+
+    public function unitsinshop($shop_id)
+    {
+
+      $all_vehicle = Unitmovement::where('shop_id',$shop_id)->where('current_shop',$shop_id)->with('vehicle.model')->get();
+
+      return response()->json(['msg' => null, 'data' => $all_vehicle, 'success' => true], 200);
+
+    }
+
+    public function check_query_defect($value, $value2)
+    {
+        return  Querydefect::where('shop_id', $value2)->where('vehicle_id',$value)->exists();
+    }
+
+
+    
+}

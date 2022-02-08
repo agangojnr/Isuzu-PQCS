@@ -1,0 +1,104 @@
+@include('layouts.header.reportheader')
+    <!-- End Row -->
+
+    <div class="container-fluid">
+
+    <!-- Individual column searching (select inputs) -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-6">
+                            <ol class="breadcrumb mb-2  bg-grey">
+                                <li class="breadcrumb-item">
+                                    <h3 class="card-title"><u>PRODUCTION TARGET REPORTS FOR
+                                        ({{\Carbon\Carbon::createFromFormat('Y-m-d', $today)->format('M j Y')}})</u></h3>
+                                </li>
+                            </ol>
+
+                        </div>
+                        <div class="col-6">
+                            {!! Form::open(['action'=>'App\Http\Controllers\attendance\AttendanceController@peopleAttreport',
+                            'method'=>'post', 'enctype' => 'multipart/form-data']); !!}
+                            <div class="row">
+                                <div class="col-7">
+                                <h4 class="card-title">Filter HC by Date</h4>
+                                <div class='input-group'>
+                                    <input type='text' name="mdate" class="form-control singledate" />
+
+                                    <div class="input-group-append">
+                                        <span class="input-group-text">
+                                            <span class="ti-calendar"></span>
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-5">
+                                <button type="submit" class="btn btn-success mt-4">Filter Hours</button>
+                            </div>
+
+                            </div>
+                            {{Form::hidden('_method', 'GET')}}
+                            {!! Form::close() !!}
+
+                        </div>
+                    </div>
+
+
+
+                    <div class="table-responsive">
+                        <table class="tablesaw table-bordered table-hover table no-wrap" data-tablesaw-mode="swipe"
+                                    data-tablesaw-sortable data-tablesaw-sortable-switch data-tablesaw-minimap
+                                    data-tablesaw-mode-switch>
+                            <thead>
+                                <th>SHOP</th>
+                                <th>EFFICIENCY TARGET</th>
+                                <th> EFFICIENCY</th>
+                                <th>ABSENTIEESM TARGET</th>
+                                <th>% ABSENTIEESM</th>
+                                <th>T/L AVAILABILITY TARGET</th>
+                                <th>T/L AVAILABILITY</th>
+                            </thead>
+                            <tbody>
+                                @foreach ($shops as $shop)
+                                <tr>
+                                    <td>{{$shop->report_name}}</td>
+                                    <td>{{$effT}}</td>
+                                    <td>{{$shop_eff[$shop->id]}}</td>
+                                    <td>{{$abT}}</td>
+                                    <td>{{$absentiesm[$shop->id]}}</td>
+                                    <td>{{$shopsTLtarget[$shop->id]}}%</td>
+                                    <td>{{$shopTLavail[$shop->id]}}</td>
+                                </tr>
+                                @endforeach
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <th>SHOP</th>
+                                    <th>EFFICIENCY TARGET</th>
+                                    <th> EFFICIENCY</th>
+                                    <th>ABSENTIEESM TARGET</th>
+                                    <th>% ABSENTIEESM</th>
+                                    <th>T/L AVAILABILITY TARGET</th>
+                                    <th>T/L AVAILABILITY</th>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @include('layouts.footer.script')
+    @yield('after-scripts')
+    @yield('extra-scripts')
+    {{ Html::script('dist/js/pages/datatable/datatable-basic.init.js') }}
+
+     {{ Html::style('assets/extra-libs/toastr/dist/build/toastr.min.css') }}
+
+    {{ Html::script('assets/extra-libs/toastr/dist/build/toastr.min.js') }}
+    {{ Html::script('assets/extra-libs/toastr/toastr-init.js') }}
+    {!! Toastr::message() !!}
+
